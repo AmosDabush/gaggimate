@@ -20,6 +20,17 @@
 
 static WebUIPlugin *g_webUIPlugin = nullptr;
 
+// The updater needs a full release location, not a base and a channel. An empty override
+// keeps the built-in one, so anyone who never sets it sees no change at all. A custom
+// location is used verbatim - channel names are a property of the stock release layout
+// and mean nothing to a private one.
+String resolveReleaseUrl(const String &override_, const String &channel) {
+    if (override_.isEmpty()) {
+        return RELEASE_URL + (channel == "latest" ? "latest" : "tag/nightly");
+    }
+    return override_;
+}
+
 // Route mbedTLS allocations to PSRAM.
 static void *mbedtlsPsramCalloc(size_t n, size_t size) { // NOSONAR
     void *p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -41,7 +52,7 @@ void WebUIPlugin::setup(Controller *_controller, PluginManager *_pluginManager) 
     this->pluginManager = _pluginManager;
     this->ota = new GitHubOTA(
         BUILD_GIT_VERSION, controller->getSystemInfo().version,
-        RELEASE_URL + (controller->getSettings().getOTAChannel() == "latest" ? "latest" : "tag/nightly"),
+        resolveReleaseUrl(controller->getSettings().getOTAReleaseUrl(), controller->getSettings().getOTAChannel()),
         [this](uint8_t phase) {
             pluginManager->trigger("ota:update:phase", "phase", phase);
             updateOTAProgress(phase, 0);
@@ -276,7 +287,8 @@ void WebUIPlugin::handleOTASettings(JsonDocument &request) {
     if (request["update"].as<bool>()) {
         if (!request["channel"].isNull()) {
             controller->getSettings().setOTAChannel(request["channel"].as<String>() == "latest" ? "latest" : "nightly");
-            ota->setReleaseUrl(RELEASE_URL + (controller->getSettings().getOTAChannel() == "latest" ? "latest" : "tag/nightly"));
+            ota->setReleaseUrl(
+                resolveReleaseUrl(controller->getSettings().getOTAReleaseUrl(), controller->getSettings().getOTAChannel()));
             lastUpdateCheck = 0;
         }
     }
@@ -324,6 +336,8 @@ void WebUIPlugin::handleSettings(AsyncWebServerRequest *request) const {
                 settings->setWifiSsid(request->arg("wifiSsid"));
             if (request->hasArg("mdnsName"))
                 settings->setMdnsName(request->arg("mdnsName"));
+            if (request->hasArg("otaReleaseUrl"))
+                settings->setOTAReleaseUrl(request->arg("otaReleaseUrl"));
             if (request->hasArg("wifiPassword") && request->arg("wifiPassword") != "---unchanged---")
                 settings->setWifiPassword(request->arg("wifiPassword"));
             if (request->hasArg("apPassword") && request->arg("apPassword").length() >= WIFI_AP_PASSWORD_MIN_LENGTH)
@@ -494,6 +508,7 @@ void WebUIPlugin::handleSettings(AsyncWebServerRequest *request) const {
     doc["wifiPassword"] = apMode ? "---unchanged---" : settings.getWifiPassword();
     doc["apPassword"] = settings.getWifiApPassword();
     doc["mdnsName"] = settings.getMdnsName();
+    doc["otaReleaseUrl"] = settings.getOTAReleaseUrl();
     doc["temperatureOffset"] = String(settings.getTemperatureOffset());
     doc["pressureOffset"] = String(settings.getPressureOffset());
     doc["pressureScaling"] = String(settings.getPressureScaling());

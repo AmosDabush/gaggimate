@@ -96,6 +96,7 @@ class Settings {
     bool isHomekit() const { return homekit.get(); }
     bool isVolumetricTarget() const { return volumetricTarget.get(); }
     String getOTAChannel() const { return otaChannel.get(); }
+    String getOTAReleaseUrl() const { return otaReleaseUrl.get(); }
     String getSavedScale() const { return savedScale.get(); }
     bool isBoilerFillActive() const { return boilerFillActive.get(); }
     int getStartupFillTime() const { return startupFillTime.get(); }
@@ -191,6 +192,7 @@ class Settings {
     void setHomekit(bool homekit);
     void setVolumetricTarget(bool volumetric_target);
     void setOTAChannel(const String &otaChannel);
+    void setOTAReleaseUrl(const String &otaReleaseUrl);
     void setSavedScale(const String &savedScale);
     void setBoilerFillActive(bool boiler_fill_active);
     void setStartupFillTime(int startup_fill_time);
@@ -300,6 +302,9 @@ class Settings {
     Property<String> timezone{registry, "tz", DEFAULT_TIMEZONE};
     Property<bool> clock24hFormat{registry, "clk_24h", true};
     Property<String> otaChannel{registry, "oc", DEFAULT_OTA_CHANNEL};
+    // Empty means "use the built-in release location". Set it to point the updater at
+    // your own builds; without this a private build is overwritten by the next update.
+    Property<String> otaReleaseUrl{registry, "our", ""};
     Property<std::vector<String>> favoritedProfiles{registry, "fp", {}};
     Property<std::vector<String>> profileOrder{registry, "po", {}}; // persisted profile ordering
     Property<float> steamPumpPercentage{registry, "spp", DEFAULT_STEAM_PUMP_PERCENTAGE};

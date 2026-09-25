@@ -17,6 +17,9 @@ constexpr size_t DNS_PERIOD = 50;
 
 const String LOCAL_URL = "http://4.4.4.1/";
 const String RELEASE_URL = "https://github.com/jniebuhr/gaggimate/releases/";
+// Where the updater looks for firmware. Falls back to the built-in location when the
+// override setting is empty, so stock behaviour is unchanged for anyone who never sets it.
+String resolveReleaseUrl(const String &override_, const String &channel);
 // Headless builds must pull their own release assets; the screen firmware would not boot on them.
 #ifdef GAGGIMATE_HEADLESS
 #define OTA_DISPLAY_FIRMWARE "display-headless-firmware.bin"
