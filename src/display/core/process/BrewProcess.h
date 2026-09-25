@@ -24,6 +24,24 @@ class BrewProcess : public Process {
     bool releaseRequested = false;
     double phaseStartVolume = 0;
     double currentVolume = 0; // most recent volume pushed
+
+    // Zero point for every volumetric target, so the targets mean "grams added by this
+    // shot" rather than "whatever number the scale happens to show".
+    //
+    // A tare is requested when the process starts, but it travels over BLE and can land
+    // after the first readings: a scale still showing 51 g satisfies a 1 g target on the
+    // very first evaluation and the phase is deleted before it runs once. A baseline
+    // captured from the first reading alone would fix that but break the opposite case -
+    // if the tare lands *after* the capture, the baseline stays at 51 while the reading
+    // drops to 0, and the final target can never be reached at all.
+    //
+    // So the baseline tracks the LOWEST reading seen during a short settling window and
+    // then freezes. A late tare pulls it to zero; a scale that is never tared keeps its
+    // standing weight as the zero point; and real early drips cannot raise it, so no
+    // yield is lost. The window is far shorter than first drop on any real shot.
+    static constexpr unsigned long VOLUMETRIC_BASELINE_WINDOW_MS = 2000;
+    double volumeBaseline = 0;
+    bool volumeBaselineSet = false;
     float currentFlow = 0.0f;
     float currentPressure = 0.0f;
     float waterPumped = 0.0f;
@@ -43,9 +61,19 @@ class BrewProcess : public Process {
     void updateVolume(double volume) override { // called even after the Process is no longer active
         currentVolume = volume;
         if (processPhase != ProcessPhase::FINISHED) { // only store measurements while active
+            if (!volumeBaselineSet) {
+                volumeBaseline = volume;
+                volumeBaselineSet = true;
+            } else if (millis() - processStarted < VOLUMETRIC_BASELINE_WINDOW_MS && volume < volumeBaseline) {
+                volumeBaseline = volume;
+            }
             volumetricRateCalculator.addMeasurement(volume);
         }
     }
+
+    // Grams added since the shot started. Never negative: a scale that drifts below its
+    // own baseline must not read as a shot running backwards.
+    double relativeVolume() const { return max(0.0, currentVolume - volumeBaseline); }
 
     void updatePressure(float pressure) { currentPressure = pressure; }
 
@@ -71,12 +99,12 @@ class BrewProcess : public Process {
         if (releaseRequested) {
             return PhaseExitReason::HOLD_RELEASED;
         }
-        double volume = currentVolume;
+        double volume = relativeVolume();
         if (volume > 0.0) {
             double currentRate = volumetricRateCalculator.getRate();
             double predictedAddedVolume = currentRate * brewDelay;
             predictedAddedVolume = std::clamp(predictedAddedVolume, 0.0, 8.0);
-            volume = currentVolume + predictedAddedVolume;
+            volume += predictedAddedVolume;
         }
         float timeInPhase = static_cast<float>(millis() - currentPhaseStarted) / 1000.0f;
         return currentPhase.isFinished(target == ProcessTarget::VOLUMETRIC, volume, timeInPhase, currentFlow, currentPressure,
@@ -99,7 +127,9 @@ class BrewProcess : public Process {
     }
 
     double getNewDelayTime() {
-        double newDelay = brewDelay + volumetricRateCalculator.getOvershootAdjustMillis(getBrewVolume(), currentVolume);
+        // Compared against the profile's target, which is in added grams - so the measured
+        // side has to be baseline-relative too, or the learned delay drifts by the offset.
+        double newDelay = brewDelay + volumetricRateCalculator.getOvershootAdjustMillis(getBrewVolume(), relativeVolume());
         if (newDelay <= 0.0 || newDelay >= PREDICTIVE_TIME) {
             return -1;
         }
@@ -162,7 +192,7 @@ class BrewProcess : public Process {
                 phaseStartedPumped = waterPumped;
                 phaseIndex++;
                 Phase nextPhase = profile.phases.at(phaseIndex);
-                phaseStartVolume = currentVolume;
+                phaseStartVolume = relativeVolume();
                 phaseStartPressure = nextPhase.transition.adaptive ? currentPressure : getPumpPressure();
                 phaseStartFlow = nextPhase.transition.adaptive ? currentFlow : getPumpFlow();
                 currentPhase = nextPhase;
@@ -264,7 +294,9 @@ class BrewProcess : public Process {
             if (endValue <= 0.0f && currentPhase.hasVolumetricTarget()) {
                 endValue = currentPhase.getVolumetricTarget().value - phaseStartVolume;
             }
-            startValue = max(0.0, currentVolume - phaseStartVolume);
+            // phaseStartVolume is baseline-relative, like the profile's target value, so
+            // the ramp and the stop condition are measured in the same units.
+            startValue = max(0.0, relativeVolume() - phaseStartVolume);
         }
         if (currentPhase.transition.target == TransitionTarget::PUMPED) {
             endValue = currentPhase.transition.duration;
